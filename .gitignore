@@ -1,0 +1,14 @@
+node_modules/
+build/
+dist/
+
+# Generated data artifacts (keep directory with .gitkeep)
+data/*
+!data/.gitkeep
+
+# Trusted setup and proving key files
+*.ptau
+*.zkey
+
+# Misc
+.DS_Store
