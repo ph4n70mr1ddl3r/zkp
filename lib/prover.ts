@@ -98,6 +98,7 @@ export async function createVoteProof(config: VoteProofConfig): Promise<VoteProo
     proposalId: config.proposalId.toString(),
     nullifier: nullifier.toString(),
     voteHash: voteHash.toString(),
+    vote_choice: config.voteChoice.toString(),
     pk_x_limbs: limbsToStrings(xLimbs),
     pk_y_limbs: limbsToStrings(yLimbs),
     sig_r_limbs: limbsToStrings(sigRLimbs),

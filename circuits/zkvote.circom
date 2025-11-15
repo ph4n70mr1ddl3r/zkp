@@ -8,6 +8,7 @@ template ZKVote(DEPTH, LIMB_BITS, LIMB_COUNT) {
     signal input proposalId;
     signal input nullifier;
     signal input voteHash;
+    signal input vote_choice;
 
     signal input pk_x_limbs[LIMB_COUNT];
     signal input pk_y_limbs[LIMB_COUNT];
@@ -87,6 +88,10 @@ template ZKVote(DEPTH, LIMB_BITS, LIMB_COUNT) {
     nullifierHasher.inputs[0] <== identityHasher.out;
     nullifierHasher.inputs[1] <== proposalId;
     nullifierHasher.out === nullifier;
+
+    component voteHasher = Poseidon(1);
+    voteHasher.inputs[0] <== vote_choice;
+    voteHasher.out === voteHash;
 }
 
 // Default instantiation for a tree of depth 4 and 4x64-bit limb encoding.

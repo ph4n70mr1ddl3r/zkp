@@ -9,7 +9,7 @@
     "outDir": "dist",
     "resolveJsonModule": true
   },
-  "include": ["scripts/**/*.ts", "lib/**/*.ts"],
+  "include": ["scripts/**/*.ts", "lib/**/*.ts", "types/**/*.d.ts"],
   "ts-node": {
     "transpileOnly": true
   }

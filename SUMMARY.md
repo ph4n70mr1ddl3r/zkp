@@ -10,6 +10,7 @@ This document provides a formal summary of the Option B anonymous voting constru
 - **ID_MSG**: `H_K("zkVote identity v1")`, constant for all voters.
 - **proposalId**: Public identifier for a given proposal/election.
 - **root_pubkeys**: Merkle root committing to all eligible secp256k1 public keys.
+- **voteChoice**: Private vote value that will be hashed inside the circuit.
 
 ## 3. Public Key Commitment
 Each eligible public key `PK_i = (pk_x_i, pk_y_i)` is committed using a Poseidon leaf:
@@ -40,12 +41,13 @@ nullifier = H_P(identity_secret, proposalId)
 ```
 
 ## 6. zk-SNARK Statement
-The prover shows knowledge of `(pk_x, pk_y, sig_r, sig_s, path)` such that:
+The prover shows knowledge of `(pk_x, pk_y, sig_r, sig_s, path, voteChoice)` such that:
 1. `VerifyECDSA(PK, ID_MSG, sig) = 1`
 2. `leaf = H_P(pk_x, pk_y)`
 3. `MerkleVerify(root_pubkeys, leaf, path) = 1`
 4. `identity_secret = H_P(sig_r, sig_s)`
 5. `nullifier = H_P(identity_secret, proposalId)`
+6. `voteHash = H_P(voteChoice)`
 
 The proof reveals no secret values.
 
@@ -55,5 +57,6 @@ The proof reveals no secret values.
 - **Uniqueness**: Nullifier prevents double voting.
 - **Anonymity**: All secret values remain hidden, and nullifiers cannot be linked to public keys.
 - **Non-interactivity**: SNARK proofs enable one-shot verification.
+- **Vote binding**: The public `voteHash` binds a private vote choice without revealing it.
 
 The Option B construction is formally secure under standard assumptions of secp256k1 ECDSA unforgeability, collision resistance of Poseidon, and soundness/zero-knowledge of the SNARK system.

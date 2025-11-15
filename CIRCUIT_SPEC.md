@@ -45,6 +45,7 @@ These are encoded as field elements in the circuit.
 - `sig_r`, `sig_s`
 - `merkle_siblings[0..D-1]`
 - `merkle_pos[0..D-1]`
+- `voteChoice`
 
 ## 4. Circuit Constraints
 
@@ -83,6 +84,11 @@ identity_secret = Poseidon(sig_r, sig_s)
 ```
 computed_nullifier = Poseidon(identity_secret, proposalId)
 computed_nullifier == nullifier
+```
+
+### 4.5 Vote Binding
+```
+voteHash = Poseidon(voteChoice)
 ```
 
 ## 5. Zero-Knowledge and Soundness
