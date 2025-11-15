@@ -1,6 +1,7 @@
 node_modules/
 build/
 dist/
+circom/
 
 # Generated data artifacts (keep directory with .gitkeep)
 data/*
