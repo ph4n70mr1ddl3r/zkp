@@ -13,3 +13,5 @@ data/*
 
 # Misc
 .DS_Store
+
+merkle.db/
