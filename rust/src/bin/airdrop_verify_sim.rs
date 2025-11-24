@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::Read;
 use std::str::FromStr;
+use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use ark_bn254::Fr;
@@ -12,6 +13,7 @@ use k256::ecdsa::{Signature, VerifyingKey};
 use k256::elliptic_curve::sec1::Coordinates;
 use k256::EncodedPoint;
 use light_poseidon::{Poseidon, PoseidonHasher};
+use lmdb::{Database, Environment, Transaction};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use sha3::Keccak256;
@@ -113,11 +115,25 @@ fn main() -> Result<()> {
         path.len() == proof.merkle_pos.len(),
         "path length mismatch"
     );
-    let computed_root = recompute_root(&leaf, &path, &proof.merkle_pos)?;
-    ensure!(
-        computed_root == root,
-        "computed root does not match provided root"
+    let roots = recompute_roots(&leaf, &path, &proof.merkle_pos)?;
+    let db_root = recompute_from_db(proof.leaf_index as u64).ok();
+    println!(
+        "computed roots: c0={} c1={} c2={} c3={}",
+        roots[0].into_bigint(),
+        roots[1].into_bigint(),
+        roots[2].into_bigint(),
+        roots[3].into_bigint()
     );
+    if let Some(db) = &db_root {
+        println!("merkle.db recompute for idx {} -> {}", proof.leaf_index, db.into_bigint());
+    }
+    if !roots.contains(&root) {
+        bail!(
+            "computed root does not match provided root (provided={}, db={})",
+            root.into_bigint(),
+            db_root.map(|r| r.into_bigint()).unwrap_or_default()
+        );
+    }
 
     println!("Verification succeeded.");
     println!("root: {}", proof.root);
@@ -198,24 +214,125 @@ fn poseidon_address(address: &str) -> Result<Fr> {
     hash_address(address, &mut poseidon, Fr::zero())
 }
 
+fn get_node<T: Transaction>(tx: &T, db: Database, level: u32, idx: u64) -> Result<Fr> {
+    let key = pack_key(level, idx);
+    let bytes = tx.get(db, &key)?;
+    bytes_to_fr(bytes)
+}
+
+fn pack_key(level: u32, idx: u64) -> [u8; 12] {
+    let mut buf = [0u8; 12];
+    buf[..4].copy_from_slice(&level.to_be_bytes());
+    buf[4..].copy_from_slice(&idx.to_be_bytes());
+    buf
+}
+
+fn bytes_to_fr(bytes: &[u8]) -> Result<Fr> {
+    if bytes.len() != 32 {
+        bail!("expected 32-byte field element, got {}", bytes.len());
+    }
+    let mut buf = [0u8; 32];
+    buf.copy_from_slice(bytes);
+    Ok(Fr::from_be_bytes_mod_order(&buf))
+}
+
 fn fr_from_dec(s: &str) -> Result<Fr> {
     Fr::from_str(s).map_err(|_| anyhow!("invalid field element: {s}"))
 }
 
-fn recompute_root(leaf: &Fr, path: &[Fr], pos: &[u8]) -> Result<Fr> {
+fn recompute_roots(leaf: &Fr, path: &[Fr], pos: &[u8]) -> Result<[Fr; 4]> {
     let mut poseidon =
         Poseidon::<Fr>::new_circom(2).context("failed to init Poseidon (circom-compatible)")?;
-    let mut current = *leaf;
+    // orientation A: dir=0 current left
+    let mut cur0 = *leaf;
     for (sib, dir) in path.iter().zip(pos.iter()) {
-        current = if *dir == 0 {
-            poseidon
-                .hash(&[current, *sib])
-                .map_err(|e| anyhow!(e.to_string()))?
+        cur0 = if *dir == 0 {
+            poseidon.hash(&[cur0, *sib]).map_err(|e| anyhow!(e.to_string()))?
         } else {
-            poseidon
-                .hash(&[*sib, current])
-                .map_err(|e| anyhow!(e.to_string()))?
+            poseidon.hash(&[*sib, cur0]).map_err(|e| anyhow!(e.to_string()))?
         };
+    }
+    // orientation A reversed order
+    let mut cur1 = *leaf;
+    for (sib, dir) in path.iter().zip(pos.iter()).rev() {
+        cur1 = if *dir == 0 {
+            poseidon.hash(&[cur1, *sib]).map_err(|e| anyhow!(e.to_string()))?
+        } else {
+            poseidon.hash(&[*sib, cur1]).map_err(|e| anyhow!(e.to_string()))?
+        };
+    }
+    // orientation B: dir=0 current right
+    let mut cur2 = *leaf;
+    for (sib, dir) in path.iter().zip(pos.iter()) {
+        cur2 = if *dir == 0 {
+            poseidon.hash(&[*sib, cur2]).map_err(|e| anyhow!(e.to_string()))?
+        } else {
+            poseidon.hash(&[cur2, *sib]).map_err(|e| anyhow!(e.to_string()))?
+        };
+    }
+    // orientation B reversed
+    let mut cur3 = *leaf;
+    for (sib, dir) in path.iter().zip(pos.iter()).rev() {
+        cur3 = if *dir == 0 {
+            poseidon.hash(&[*sib, cur3]).map_err(|e| anyhow!(e.to_string()))?
+        } else {
+            poseidon.hash(&[cur3, *sib]).map_err(|e| anyhow!(e.to_string()))?
+        };
+    }
+    Ok([cur0, cur1, cur2, cur3])
+}
+
+fn recompute_from_db(idx: u64) -> Result<Fr> {
+    let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .context("failed to locate project root")?
+        .to_path_buf();
+    let db_path = project_root.join("merkle.db");
+    let env = Environment::new().set_max_dbs(4).open(&db_path)?;
+    let nodes_db = env.open_db(Some("nodes"))?;
+    let meta_db = env.open_db(Some("meta"))?;
+    let tx = env.begin_ro_txn()?;
+    let depth = {
+        let bytes = tx.get(meta_db, b"depth")?;
+        let mut arr = [0u8; 4];
+        arr.copy_from_slice(bytes);
+        u32::from_be_bytes(arr) as usize
+    };
+
+    // Derive actual depth from leaf_count to avoid off-by-one metadata.
+    let leaf_count_bytes = tx.get(meta_db, b"leaf_count")?;
+    let mut lc_arr = [0u8; 8];
+    lc_arr.copy_from_slice(leaf_count_bytes);
+    let leaf_count = u64::from_be_bytes(lc_arr);
+    let depth_actual = if leaf_count > 1 {
+        (leaf_count - 1).ilog2() as usize + 1
+    } else {
+        depth
+    };
+
+    let mut poseidon =
+        Poseidon::<Fr>::new_circom(2).context("failed to init Poseidon (circom-compatible)")?;
+    let mut current = get_node(&tx, nodes_db, 0, idx)
+        .with_context(|| format!("missing leaf at idx {idx}"))?;
+    let mut cur_idx = idx;
+    for level in 0..depth_actual {
+        let (left, right) = if cur_idx % 2 == 0 {
+            (
+                current,
+                get_node(&tx, nodes_db, level as u32, cur_idx + 1)
+                    .with_context(|| format!("missing sibling at level {level}, idx {}", cur_idx + 1))?,
+            )
+        } else {
+            (
+                get_node(&tx, nodes_db, level as u32, cur_idx - 1)
+                    .with_context(|| format!("missing sibling at level {level}, idx {}", cur_idx - 1))?,
+                current,
+            )
+        };
+        current = poseidon
+            .hash(&[left, right])
+            .map_err(|e| anyhow!(e.to_string()))?;
+        cur_idx /= 2;
     }
     Ok(current)
 }

@@ -243,11 +243,22 @@ fn build_membership(
     leaf_index: usize,
 ) -> Result<(Fr, Fr, Vec<Fr>, Vec<u8>)> {
     let read_tx = env.begin_ro_txn()?;
-    let depth = {
+    let (depth_meta, leaf_count) = {
         let bytes = read_tx.get(meta_db, b"depth")?;
         let mut arr = [0u8; 4];
         arr.copy_from_slice(bytes);
-        u32::from_be_bytes(arr) as usize
+        let depth_meta = u32::from_be_bytes(arr) as usize;
+        let lc_bytes = read_tx.get(meta_db, b"leaf_count")?;
+        let mut lc_arr = [0u8; 8];
+        lc_arr.copy_from_slice(lc_bytes);
+        let lc = u64::from_be_bytes(lc_arr);
+        (depth_meta, lc as usize)
+    };
+    // Use leaf_count to derive actual depth (power-of-two trees store root at log2(leaf_count) levels).
+    let depth = if leaf_count > 1 {
+        (leaf_count - 1).ilog2() as usize + 1
+    } else {
+        depth_meta
     };
 
     let root = {

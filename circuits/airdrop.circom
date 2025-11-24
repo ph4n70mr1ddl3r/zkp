@@ -152,5 +152,5 @@ template Airdrop(DEPTH, LIMB_BITS, LIMB_COUNT) {
     nullifier === leaf;
 }
 
-// Depth 25 (from merkle.db meta), limb bits 64, limb count 4.
-component main = Airdrop(25, 64, 4);
+// Depth 26 (log2(leaf_count) for 2^26 leaves), limb bits 64, limb count 4.
+component main = Airdrop(26, 64, 4);
