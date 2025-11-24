@@ -100,7 +100,7 @@ fn main() -> Result<()> {
 
     let pk_x_fr = fr_from_hex32(&proof.pubkey.x)?;
     let pk_y_fr = fr_from_hex32(&proof.pubkey.y)?;
-    let identity = poseidon_hash2(pk_x_fr, pk_y_fr)?;
+    let identity = poseidon_hash2(sig_r_fr, sig_s_fr)?;
     let drop_domain = Fr::from(1u64);
     let nullifier = poseidon_hash2(identity, drop_domain)?;
     ensure!(

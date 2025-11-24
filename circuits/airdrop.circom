@@ -161,6 +161,17 @@ template Airdrop(DEPTH, LIMB_BITS, LIMB_COUNT) {
     signal leaf;
     leaf <== leafHasher.out;
 
+    // Hash signature limbs for identity secret
+    component sigHasher = Poseidon(2);
+    component sigRPacker = Poseidon(LIMB_COUNT);
+    component sigSPacker = Poseidon(LIMB_COUNT);
+    for (var i = 0; i < LIMB_COUNT; i++) {
+        sigRPacker.inputs[i] <== sig_r_limbs[i];
+        sigSPacker.inputs[i] <== sig_s_limbs[i];
+    }
+    sigHasher.inputs[0] <== sigRPacker.out;
+    sigHasher.inputs[1] <== sigSPacker.out;
+
     // Merkle path
     signal current[DEPTH + 1];
     current[0] <== leaf;
@@ -188,12 +199,9 @@ template Airdrop(DEPTH, LIMB_BITS, LIMB_COUNT) {
     }
     current[DEPTH] === root;
 
-    // Nullifier = Poseidon(Poseidon(pkxPack, pkyPack), DROP_DOMAIN)
-    component identityHasher = Poseidon(2);
-    identityHasher.inputs[0] <== pkxPack.out;
-    identityHasher.inputs[1] <== pkyPack.out;
+    // Nullifier = Poseidon(Poseidon(sig_r, sig_s), DROP_DOMAIN)
     component nullifierHasher = Poseidon(2);
-    nullifierHasher.inputs[0] <== identityHasher.out;
+    nullifierHasher.inputs[0] <== sigHasher.out;
     nullifierHasher.inputs[1] <== DROP_DOMAIN;
     nullifier === nullifierHasher.out;
 }
