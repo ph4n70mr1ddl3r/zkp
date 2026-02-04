@@ -1,9 +1,9 @@
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use k256::FieldBytes;
 use k256::ecdsa::signature::hazmat::PrehashSigner;
 use k256::ecdsa::Signature;
 use k256::ecdsa::SigningKey;
+use k256::FieldBytes;
 use sha2::{Digest, Sha256};
 
 /// Deterministic (RFC6979) ECDSA signature over SHA-256(message).
@@ -25,9 +25,7 @@ fn main() -> Result<()> {
     hasher.update(args.message.as_bytes());
     let digest = hasher.finalize();
 
-    let sig: Signature = sk
-        .sign_prehash(&digest)
-        .map_err(|e| anyhow::anyhow!(e))?;
+    let sig: Signature = sk.sign_prehash(&digest).map_err(|e| anyhow::anyhow!(e))?;
 
     let r_bytes = sig.r().to_bytes();
     let s_bytes = sig.s().to_bytes();
@@ -46,7 +44,10 @@ fn main() -> Result<()> {
 fn parse_privkey(hex_key: &str) -> Result<SigningKey> {
     let trimmed = hex_key.strip_prefix("0x").unwrap_or(hex_key);
     if trimmed.len() != 64 {
-        bail!("private key must be 32-byte hex (64 chars), got {}", trimmed.len());
+        bail!(
+            "private key must be 32-byte hex (64 chars), got {}",
+            trimmed.len()
+        );
     }
     let bytes = hex::decode(trimmed).context("invalid hex private key")?;
     let raw: [u8; 32] = bytes
