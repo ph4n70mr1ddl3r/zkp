@@ -6,7 +6,6 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use ark_bn254::Fr;
 use ark_ff::{PrimeField, Zero};
 use clap::Parser;
-use hex;
 use light_poseidon::{Poseidon, PoseidonHasher};
 use lmdb::{Database, Environment, Transaction};
 
@@ -74,7 +73,8 @@ fn project_root() -> Result<PathBuf> {
 }
 
 fn read_manifest(path: &Path) -> Result<Vec<PathBuf>> {
-    let file = File::open(path).with_context(|| format!("failed to open manifest {}", path.display()))?;
+    let file =
+        File::open(path).with_context(|| format!("failed to open manifest {}", path.display()))?;
     let reader = BufReader::new(file);
     let mut entries = Vec::new();
     for line in reader.lines() {

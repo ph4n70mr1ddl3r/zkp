@@ -7,7 +7,6 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use ark_bn254::Fr;
 use ark_ff::{PrimeField, Zero};
 use clap::Parser;
-use hex;
 use k256::ecdsa::signature::hazmat::PrehashVerifier;
 use k256::ecdsa::{Signature, VerifyingKey};
 use k256::elliptic_curve::sec1::Coordinates;
@@ -299,7 +298,7 @@ fn recompute_from_db(idx: u64) -> Result<Fr> {
         get_node(&tx, nodes_db, 0, idx).with_context(|| format!("missing leaf at idx {idx}"))?;
     let mut cur_idx = idx;
     for level in 0..depth_actual {
-        let (left, right) = if cur_idx % 2 == 0 {
+        let (left, right) = if cur_idx.is_multiple_of(2) {
             (
                 current,
                 get_node(&tx, nodes_db, level as u32, cur_idx + 1).with_context(|| {

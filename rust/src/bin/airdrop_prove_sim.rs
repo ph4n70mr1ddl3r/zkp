@@ -6,7 +6,6 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use ark_bn254::Fr;
 use ark_ff::{PrimeField, Zero};
 use clap::Parser;
-use hex;
 use k256::ecdsa::signature::hazmat::PrehashSigner;
 use k256::ecdsa::{Signature, SigningKey, VerifyingKey};
 use k256::elliptic_curve::sec1::Coordinates;
@@ -101,7 +100,9 @@ fn main() -> Result<()> {
     let nodes_db = env
         .open_db(Some("nodes"))
         .context("failed to open nodes db")?;
-    let meta_db = env.open_db(Some("meta")).context("failed to open meta db")?;
+    let meta_db = env
+        .open_db(Some("meta"))
+        .context("failed to open meta db")?;
 
     let (leaf_hash, root, merkle_path, merkle_pos) =
         build_membership(&env, nodes_db, meta_db, leaf_index)?;
@@ -164,7 +165,10 @@ fn project_root() -> Result<PathBuf> {
 fn parse_privkey(hex_key: &str) -> Result<SigningKey> {
     let trimmed = hex_key.strip_prefix("0x").unwrap_or(hex_key);
     if trimmed.len() != 64 {
-        bail!("private key must be 32-byte hex (64 chars), got {}", trimmed.len());
+        bail!(
+            "private key must be 32-byte hex (64 chars), got {}",
+            trimmed.len()
+        );
     }
     let bytes = hex::decode(trimmed).context("invalid hex private key")?;
     let raw: [u8; 32] = bytes
@@ -202,7 +206,8 @@ fn eth_address(vk: &VerifyingKey) -> Result<String> {
 }
 
 fn read_manifest(path: &Path) -> Result<Vec<PathBuf>> {
-    let file = File::open(path).with_context(|| format!("failed to open manifest {}", path.display()))?;
+    let file =
+        File::open(path).with_context(|| format!("failed to open manifest {}", path.display()))?;
     let reader = BufReader::new(file);
     let mut entries = Vec::new();
     for line in reader.lines() {
@@ -278,11 +283,15 @@ fn build_membership(
     let mut pos = Vec::with_capacity(depth);
     let mut idx = leaf_index as u64;
     for level in 0..depth {
-        let sibling_idx = if idx % 2 == 0 { idx + 1 } else { idx - 1 };
+        let sibling_idx = if idx.is_multiple_of(2) {
+            idx + 1
+        } else {
+            idx - 1
+        };
         let sibling = get_node(&read_tx, nodes_db, level as u32, sibling_idx)
             .with_context(|| format!("missing sibling at level {level}, idx {sibling_idx}"))?;
         path.push(sibling);
-        pos.push(if idx % 2 == 0 { 0 } else { 1 });
+        pos.push(if idx.is_multiple_of(2) { 0 } else { 1 });
         idx /= 2;
     }
 
@@ -313,11 +322,8 @@ fn fr_from_hex32(h: &str) -> Result<Fr> {
 fn poseidon_hash2(a: Fr, b: Fr) -> Result<Fr> {
     let mut poseidon =
         Poseidon::<Fr>::new_circom(2).context("failed to init Poseidon (circom-compatible)")?;
-    poseidon
-        .hash(&[a, b])
-        .map_err(|e| anyhow!(e.to_string()))
+    poseidon.hash(&[a, b]).map_err(|e| anyhow!(e.to_string()))
 }
-
 
 fn hash_address(address_hex: &str, poseidon: &mut Poseidon<Fr>, zero_leaf: Fr) -> Result<Fr> {
     let addr = address_hex.trim_start_matches("0x");

@@ -7,7 +7,6 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField, Zero};
 use clap::Parser;
-use hex;
 use indicatif::{ProgressBar, ProgressStyle};
 use light_poseidon::{Poseidon, PoseidonHasher};
 use lmdb::{Database, DatabaseFlags, Environment, Transaction, WriteFlags};
@@ -54,7 +53,8 @@ fn main() -> Result<()> {
 
     remove_path(&db_path)?;
     remove_path(&root_out_path)?;
-    fs::create_dir_all(&db_path).with_context(|| format!("failed to create {}", db_path.display()))?;
+    fs::create_dir_all(&db_path)
+        .with_context(|| format!("failed to create {}", db_path.display()))?;
 
     let map_size = args.map_size_gb * (1 << 30);
     let env = Environment::new()
@@ -80,8 +80,9 @@ fn main() -> Result<()> {
         .workers
         .or_else(|| thread::available_parallelism().ok().map(|v| v.get()))
         .unwrap_or(4);
-    let mut leaf_count = ingest_leaves(&env, nodes_db, &shard_files, zero_leaf, args.batch, workers)
-    .context("ingesting leaves")?;
+    let mut leaf_count =
+        ingest_leaves(&env, nodes_db, &shard_files, zero_leaf, args.batch, workers)
+            .context("ingesting leaves")?;
     if leaf_count == 0 {
         bail!("no addresses found in manifest {}", manifest_path.display());
     }
@@ -92,7 +93,14 @@ fn main() -> Result<()> {
             "Padding {} leaves up to next power of two ({})",
             leaf_count, padded_leaves
         );
-        pad_zero_leaves(&env, nodes_db, leaf_count, padded_leaves, zero_leaf, args.batch)?;
+        pad_zero_leaves(
+            &env,
+            nodes_db,
+            leaf_count,
+            padded_leaves,
+            zero_leaf,
+            args.batch,
+        )?;
         leaf_count = padded_leaves;
     }
 
@@ -137,7 +145,8 @@ fn remove_path(path: &Path) -> Result<()> {
 }
 
 fn read_manifest(path: &Path) -> Result<Vec<PathBuf>> {
-    let file = File::open(path).with_context(|| format!("failed to open manifest {}", path.display()))?;
+    let file =
+        File::open(path).with_context(|| format!("failed to open manifest {}", path.display()))?;
     let reader = BufReader::new(file);
     let mut entries = Vec::new();
     for line in reader.lines() {
@@ -156,7 +165,12 @@ fn read_manifest(path: &Path) -> Result<Vec<PathBuf>> {
 
 fn store_metadata(env: &Environment, meta_db: Database, leaf_count: u64, depth: u32) -> Result<()> {
     let mut tx = env.begin_rw_txn()?;
-    tx.put(meta_db, b"leaf_count", &leaf_count.to_be_bytes(), WriteFlags::empty())?;
+    tx.put(
+        meta_db,
+        b"leaf_count",
+        &leaf_count.to_be_bytes(),
+        WriteFlags::empty(),
+    )?;
     tx.put(meta_db, b"depth", &depth.to_be_bytes(), WriteFlags::empty())?;
     tx.commit()?;
     Ok(())
@@ -230,8 +244,13 @@ fn pad_zero_leaves(
     let mut tx = env.begin_rw_txn()?;
     for idx in start..end {
         let key = pack_key(0, idx as u64);
-        tx.put(nodes_db, &key, &fr_to_bytes(&zero_leaf), WriteFlags::empty())?;
-        if (idx - start + 1) % batch == 0 {
+        tx.put(
+            nodes_db,
+            &key,
+            &fr_to_bytes(&zero_leaf),
+            WriteFlags::empty(),
+        )?;
+        if (idx - start + 1).is_multiple_of(batch) {
             tx.commit()?;
             tx = env.begin_rw_txn()?;
         }
@@ -265,7 +284,7 @@ fn build_tree(
     let mut level: u32 = 0;
 
     while level_count > 1 {
-        let parent_level_count = (level_count + 1) / 2;
+        let parent_level_count = level_count.div_ceil(2);
         println!(
             "Building level {} → {} ({} nodes)",
             level,
@@ -288,9 +307,13 @@ fn build_tree(
             let end = (start + chunk_pairs).min(parent_level_count);
             let mut pairs = Vec::with_capacity((end - start) as usize);
             for parent_idx in start..end {
-                let left = get_node(&read_tx, nodes_db, level, parent_idx * 2).with_context(
-                    || format!("missing left child at level {level}, idx {}", parent_idx * 2),
-                )?;
+                let left =
+                    get_node(&read_tx, nodes_db, level, parent_idx * 2).with_context(|| {
+                        format!(
+                            "missing left child at level {level}, idx {}",
+                            parent_idx * 2
+                        )
+                    })?;
 
                 let right_idx = parent_idx * 2 + 1;
                 let right = if right_idx < level_count {
@@ -320,17 +343,11 @@ fn build_tree(
     }
 
     let read_tx = env.begin_ro_txn()?;
-    let root = get_node(&read_tx, nodes_db, level, 0)
-        .context("missing root after build")?;
+    let root = get_node(&read_tx, nodes_db, level, 0).context("missing root after build")?;
     Ok(root)
 }
 
-fn get_node<T: Transaction>(
-    tx: &T,
-    db: Database,
-    level: u32,
-    idx: u64,
-) -> Result<Fr> {
+fn get_node<T: Transaction>(tx: &T, db: Database, level: u32, idx: u64) -> Result<Fr> {
     let key = pack_key(level, idx);
     let bytes = tx.get(db, &key)?;
     bytes_to_fr(bytes)
@@ -343,11 +360,7 @@ fn pack_key(level: u32, idx: u64) -> [u8; 12] {
     buf
 }
 
-fn hash_leaf(
-    address_hex: &str,
-    poseidon: &mut Poseidon<Fr>,
-    zero_leaf: Fr,
-) -> Result<Fr> {
+fn hash_leaf(address_hex: &str, poseidon: &mut Poseidon<Fr>, zero_leaf: Fr) -> Result<Fr> {
     let addr = address_hex.trim_start_matches("0x");
     let bytes = hex::decode(addr).with_context(|| format!("invalid hex address: {address_hex}"))?;
     if bytes.len() != 20 {
@@ -363,11 +376,7 @@ fn hash_leaf(
     }
 }
 
-fn hash_pair(
-    poseidon: &mut Poseidon<Fr>,
-    left: Fr,
-    right: Fr,
-) -> Result<Fr> {
+fn hash_pair(poseidon: &mut Poseidon<Fr>, left: Fr, right: Fr) -> Result<Fr> {
     poseidon
         .hash(&[left, right])
         .map_err(|e| anyhow!(e.to_string()))
@@ -399,7 +408,12 @@ fn hash_and_flush_leaves(
     let mut tx = env.begin_rw_txn()?;
     for (idx, leaf_hash) in hashed {
         let key = pack_key(0, idx);
-        tx.put(nodes_db, &key, &fr_to_bytes(&leaf_hash), WriteFlags::empty())?;
+        tx.put(
+            nodes_db,
+            &key,
+            &fr_to_bytes(&leaf_hash),
+            WriteFlags::empty(),
+        )?;
     }
     tx.commit()?;
     Ok(())
@@ -414,14 +428,13 @@ fn parallel_hash_leaves(
         return Ok(Vec::new());
     }
     let threads = workers.max(1);
-    let chunk_size = (chunk.len() + threads - 1) / threads;
+    let chunk_size = chunk.len().div_ceil(threads);
     let (tx, rx) = mpsc::channel();
     thread::scope(|scope| {
         for slice in chunk.chunks(chunk_size) {
             let tx = tx.clone();
             scope.spawn(move || {
-                let mut poseidon =
-                    Poseidon::<Fr>::new_circom(2).expect("poseidon init in worker");
+                let mut poseidon = Poseidon::<Fr>::new_circom(2).expect("poseidon init in worker");
                 let mut local = Vec::with_capacity(slice.len());
                 for (idx, addr) in slice {
                     let leaf = hash_leaf(addr, &mut poseidon, zero_leaf).expect("hash_leaf");
@@ -437,27 +450,24 @@ fn parallel_hash_leaves(
     Ok(out)
 }
 
-fn parallel_hash_pairs(
-    pairs: Vec<(u64, Fr, Fr)>,
-    workers: usize,
-) -> Result<Vec<(u64, Fr)>> {
+fn parallel_hash_pairs(pairs: Vec<(u64, Fr, Fr)>, workers: usize) -> Result<Vec<(u64, Fr)>> {
     if pairs.is_empty() {
         return Ok(Vec::new());
     }
     let threads = workers.max(1);
-    let chunk_size = (pairs.len() + threads - 1) / threads;
+    let chunk_size = pairs.len().div_ceil(threads);
     let (tx, rx) = mpsc::channel();
     thread::scope(|scope| {
         for slice in pairs.chunks(chunk_size) {
             let tx = tx.clone();
             let slice = slice.to_vec();
             scope.spawn(move || {
-                let mut poseidon =
-                    Poseidon::<Fr>::new_circom(2).expect("poseidon init in worker");
+                let mut poseidon = Poseidon::<Fr>::new_circom(2).expect("poseidon init in worker");
                 let mut local = Vec::with_capacity(slice.len());
                 for (idx, left, right) in slice {
-                    let parent =
-                        poseidon.hash(&[left, right]).expect("poseidon hash in worker");
+                    let parent = poseidon
+                        .hash(&[left, right])
+                        .expect("poseidon hash in worker");
                     local.push((idx, parent));
                 }
                 tx.send(local).expect("send");
