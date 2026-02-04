@@ -1,10 +1,10 @@
 [package]
-name = "zkvote-proof"
+name = "zk-airdrop"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "zkvote_proof"
+name = "zk_airdrop"
 path = "src/lib.rs"
 
 [[bin]]

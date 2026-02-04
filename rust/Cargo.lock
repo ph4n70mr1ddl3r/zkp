@@ -1260,7 +1260,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "zkvote-proof"
+name = "zk-airdrop"
 version = "0.1.0"
 dependencies = [
  "anyhow",

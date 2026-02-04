@@ -12,7 +12,7 @@ use lmdb::{Database, Environment, Transaction};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use zkvote_proof::{
+use zk_airdrop::{
     bytes_to_fr, compute_tree_depth, eth_address, find_address_index, fr_from_hex32, get_node,
     hash_address, parse_privkey, poseidon_hash2, project_root, pubkey_hex, read_manifest,
     DROP_DOMAIN, MAX_DBS,

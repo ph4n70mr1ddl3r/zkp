@@ -2,7 +2,7 @@ use anyhow::Context;
 use ark_ff::PrimeField;
 use lmdb::{Environment, Transaction};
 
-use zkvote_proof::{bytes_to_fr, project_root, MAX_DBS};
+use zk_airdrop::{bytes_to_fr, project_root, MAX_DBS};
 
 fn main() -> anyhow::Result<()> {
     let root = project_root()?;

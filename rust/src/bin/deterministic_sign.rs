@@ -4,7 +4,7 @@ use k256::ecdsa::signature::hazmat::PrehashSigner;
 use k256::ecdsa::Signature;
 use sha2::{Digest, Sha256};
 
-use zkvote_proof::parse_privkey;
+use zk_airdrop::parse_privkey;
 
 /// Deterministic (RFC6979) ECDSA signature over SHA-256(message).
 #[derive(Debug, Parser)]

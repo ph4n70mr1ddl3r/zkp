@@ -13,7 +13,7 @@ use lmdb::{Database, DatabaseFlags, Environment, Transaction, WriteFlags};
 use std::sync::mpsc;
 use std::thread;
 
-use zkvote_proof::{
+use zk_airdrop::{
     compute_tree_depth, fr_to_bytes, get_node, hash_address, hash_pair, pack_key, project_root,
     read_manifest, store_metadata_helper, CHUNK_PAIRS, DEFAULT_WORKER_COUNT, MAX_DBS,
 };
@@ -61,6 +61,12 @@ fn main() -> Result<()> {
     fs::create_dir_all(&db_path)
         .with_context(|| format!("failed to create {}", db_path.display()))?;
 
+    if args.map_size_gb == 0 {
+        anyhow::bail!("map_size_gb must be greater than 0");
+    }
+    if args.map_size_gb > 1024 {
+        anyhow::bail!("map_size_gb must not exceed 1024");
+    }
     let map_size = args.map_size_gb * (1 << 30);
     let env = Environment::new()
         .set_max_dbs(MAX_DBS)
@@ -345,14 +351,20 @@ fn parallel_hash_leaves(
     let threads = workers.max(1);
     let chunk_size = chunk.len().div_ceil(threads);
     let (tx, rx) = mpsc::channel();
+    let (error_tx, error_rx) = mpsc::channel();
+
     thread::scope(|scope| {
         for slice in chunk.chunks(chunk_size) {
             let tx = tx.clone();
+            let error_tx = error_tx.clone();
             scope.spawn(move || {
                 let mut poseidon = Poseidon::<Fr>::new_circom(2).map_err(anyhow::Error::msg)?;
                 let mut local = Vec::with_capacity(slice.len());
                 for (idx, addr) in slice {
-                    let leaf = hash_address(addr, &mut poseidon, zero_leaf)?;
+                    let leaf = hash_address(addr, &mut poseidon, zero_leaf).map_err(|e| {
+                        let _ = error_tx.send(e.to_string());
+                        anyhow::anyhow!("hash failed: {}", e)
+                    })?;
                     local.push((*idx, leaf));
                 }
                 tx.send(local)?;
@@ -360,7 +372,14 @@ fn parallel_hash_leaves(
             });
         }
     });
+
     drop(tx);
+    drop(error_tx);
+
+    if let Some(err_msg) = error_rx.try_iter().next() {
+        return Err(anyhow::anyhow!("worker error: {}", err_msg));
+    }
+
     let mut out: Vec<(u64, Fr)> = rx.into_iter().flatten().collect();
     out.sort_by_key(|(idx, _)| *idx);
     Ok(out)
@@ -373,15 +392,21 @@ fn parallel_hash_pairs(pairs: Vec<(u64, Fr, Fr)>, workers: usize) -> Result<Vec<
     let threads = workers.max(1);
     let chunk_size = pairs.len().div_ceil(threads);
     let (tx, rx) = mpsc::channel();
+    let (error_tx, error_rx) = mpsc::channel();
+
     thread::scope(|scope| {
         for slice in pairs.chunks(chunk_size) {
             let tx = tx.clone();
+            let error_tx = error_tx.clone();
             let slice = slice.to_vec();
             scope.spawn(move || {
                 let mut poseidon = Poseidon::<Fr>::new_circom(2).map_err(anyhow::Error::msg)?;
                 let mut local = Vec::with_capacity(slice.len());
                 for (idx, left, right) in slice {
-                    let parent = poseidon.hash(&[left, right])?;
+                    let parent = poseidon.hash(&[left, right]).map_err(|e| {
+                        let _ = error_tx.send(e.to_string());
+                        anyhow::anyhow!("hash failed: {}", e)
+                    })?;
                     local.push((idx, parent));
                 }
                 tx.send(local)?;
@@ -389,7 +414,14 @@ fn parallel_hash_pairs(pairs: Vec<(u64, Fr, Fr)>, workers: usize) -> Result<Vec<
             });
         }
     });
+
     drop(tx);
+    drop(error_tx);
+
+    if let Some(err_msg) = error_rx.try_iter().next() {
+        return Err(anyhow::anyhow!("worker error: {}", err_msg));
+    }
+
     let mut out: Vec<(u64, Fr)> = rx.into_iter().flatten().collect();
     out.sort_by_key(|(idx, _)| *idx);
     Ok(out)

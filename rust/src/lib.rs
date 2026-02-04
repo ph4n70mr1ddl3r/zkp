@@ -23,6 +23,7 @@ use sha3::{Digest, Keccak256};
 pub const ADDRESS_SIZE: usize = 20;
 pub const FIELD_ELEMENT_SIZE: usize = 32;
 pub const PRIVATE_KEY_HEX_SIZE: usize = 64;
+pub const PACK_KEY_SIZE: usize = 12;
 pub const MAX_DBS: u32 = 4;
 
 pub const DEFAULT_WORKER_COUNT: usize = 4;
@@ -124,9 +125,9 @@ pub fn get_node<T: Transaction>(tx: &T, db: Database, level: u32, idx: u64) -> R
     bytes_to_fr(bytes)
 }
 
-/// Packs a level and index into a 12-byte key for LMDB storage.
-pub fn pack_key(level: u32, idx: u64) -> [u8; 12] {
-    let mut buf = [0u8; 12];
+/// Packs a level and index into a key for LMDB storage.
+pub fn pack_key(level: u32, idx: u64) -> [u8; PACK_KEY_SIZE] {
+    let mut buf = [0u8; PACK_KEY_SIZE];
     buf[..4].copy_from_slice(&level.to_be_bytes());
     buf[4..].copy_from_slice(&idx.to_be_bytes());
     buf
@@ -174,7 +175,9 @@ pub fn hash_address(address_hex: &str, poseidon: &mut Poseidon<Fr>, zero_leaf: F
 }
 
 fn address_to_field_element(address_hex: &str) -> Result<Fr> {
-    let addr = address_hex.trim_start_matches("0x");
+    let addr = address_hex
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
     let bytes = hex::decode(addr).with_context(|| format!("invalid hex address: {address_hex}"))?;
     if bytes.len() != ADDRESS_SIZE {
         bail!("address {} must be {} bytes", address_hex, ADDRESS_SIZE);
@@ -260,6 +263,8 @@ mod tests {
         assert_eq!(compute_tree_depth(5, 0), 3);
         assert_eq!(compute_tree_depth(8, 0), 3);
         assert_eq!(compute_tree_depth(16, 0), 4);
+        assert_eq!(compute_tree_depth(1_000_000, 0), 20);
+        assert_eq!(compute_tree_depth(2, 10), 1);
     }
 
     #[test]
@@ -273,11 +278,27 @@ mod tests {
     }
 
     #[test]
+    fn test_pack_key_edge_cases() {
+        let key = pack_key(u32::MAX, u64::MAX);
+        assert_eq!(key.len(), 12);
+        let level = u32::from_be_bytes(key[..4].try_into().unwrap());
+        let idx = u64::from_be_bytes(key[4..].try_into().unwrap());
+        assert_eq!(level, u32::MAX);
+        assert_eq!(idx, u64::MAX);
+    }
+
+    #[test]
     fn test_fr_to_bytes_and_back() {
         let fr = Fr::from(42u64);
         let bytes = fr_to_bytes(&fr);
         let fr_back = bytes_to_fr(&bytes).unwrap();
         assert_eq!(fr, fr_back);
+    }
+
+    #[test]
+    fn test_bytes_to_fr_invalid_length() {
+        let invalid_bytes = [0u8; 31];
+        assert!(bytes_to_fr(&invalid_bytes).is_err());
     }
 
     #[test]
@@ -290,6 +311,12 @@ mod tests {
     #[test]
     fn test_fr_from_hex32_invalid_length() {
         let hex_str = "2a";
+        assert!(fr_from_hex32(hex_str).is_err());
+    }
+
+    #[test]
+    fn test_fr_from_hex32_invalid_hex() {
+        let hex_str = "00000000000000000000000000000000000000000000000000000000000000gg";
         assert!(fr_from_hex32(hex_str).is_err());
     }
 
@@ -307,11 +334,28 @@ mod tests {
     }
 
     #[test]
+    fn test_address_to_field_element_invalid_hex() {
+        let addr = "0x123456789012345678901234567890123456789gg";
+        assert!(address_to_field_element(addr).is_err());
+    }
+
+    #[test]
     fn test_poseidon_hash2() {
         let a = Fr::from(1u64);
         let b = Fr::from(2u64);
         let result = poseidon_hash2(a, b).unwrap();
         assert!(!result.is_zero());
+        assert_ne!(a, result);
+        assert_ne!(b, result);
+    }
+
+    #[test]
+    fn test_poseidon_hash2_deterministic() {
+        let a = Fr::from(42u64);
+        let b = Fr::from(100u64);
+        let result1 = poseidon_hash2(a, b).unwrap();
+        let result2 = poseidon_hash2(a, b).unwrap();
+        assert_eq!(result1, result2);
     }
 
     #[test]
@@ -336,11 +380,55 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_privkey_invalid_hex() {
+        let invalid_key = "00000000000000000000000000000000000000000000000000000000000000gg";
+        let sk = parse_privkey(invalid_key);
+        assert!(sk.is_err());
+    }
+
+    #[test]
+    fn test_parse_privkey_zero_key() {
+        let zero_key = "0000000000000000000000000000000000000000000000000000000000000000";
+        assert!(parse_privkey(zero_key).is_err());
+    }
+
+    #[test]
     fn test_hash_address() {
         let addr = "0x1234567890123456789012345678901234567890";
         let mut poseidon = Poseidon::<Fr>::new_circom(2).unwrap();
         let zero_leaf = Fr::zero();
         let hash = hash_address(addr, &mut poseidon, zero_leaf).unwrap();
         assert!(!hash.is_zero());
+    }
+
+    #[test]
+    fn test_hash_address_case_insensitive() {
+        let addr1 = "0x1234567890abcdef1234567890abcdef12345678";
+        let addr2 = "0X1234567890ABCDEF1234567890ABCDEF12345678";
+        let mut poseidon = Poseidon::<Fr>::new_circom(2).unwrap();
+        let zero_leaf = Fr::zero();
+        let hash1 = hash_address(addr1, &mut poseidon, zero_leaf).unwrap();
+        let hash2 = hash_address(addr2, &mut poseidon, zero_leaf).unwrap();
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_eth_address_derivation() {
+        let valid_key = "0000000000000000000000000000000000000000000000000000000000000001";
+        let sk = parse_privkey(valid_key).unwrap();
+        let vk = k256::ecdsa::VerifyingKey::from(&sk);
+        let addr = eth_address(&vk).unwrap();
+        assert_eq!(addr.len(), 42);
+        assert!(addr.starts_with("0x"));
+    }
+
+    #[test]
+    fn test_pubkey_hex() {
+        let valid_key = "0000000000000000000000000000000000000000000000000000000000000001";
+        let sk = parse_privkey(valid_key).unwrap();
+        let vk = k256::ecdsa::VerifyingKey::from(&sk);
+        let (x, y) = pubkey_hex(&vk).unwrap();
+        assert_eq!(x.len(), 64);
+        assert_eq!(y.len(), 64);
     }
 }

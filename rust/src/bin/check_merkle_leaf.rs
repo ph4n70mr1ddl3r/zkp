@@ -6,7 +6,7 @@ use light_poseidon::Poseidon;
 use lmdb::Environment;
 use std::path::PathBuf;
 
-use zkvote_proof::{
+use zk_airdrop::{
     find_address_index, get_node, hash_address, project_root, read_manifest, MAX_DBS,
 };
 

@@ -14,9 +14,9 @@ use lmdb::{Environment, Transaction};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use zkvote_proof::{
+use zk_airdrop::{
     compute_tree_depth, eth_address, fr_from_hex32, get_node, hash_address, hash_pair,
-    poseidon_hash2, project_root, DROP_DOMAIN, MAX_DBS,
+    poseidon_hash2, project_root, DROP_DOMAIN, FIELD_ELEMENT_SIZE, MAX_DBS,
 };
 
 /// Simulated verifier for the private airdrop: checks signature, address binding, Merkle path, and nullifier.
@@ -157,11 +157,8 @@ fn main() -> Result<()> {
 
 fn validate_hex_to_bytes32(hex_str: &str, field_name: &str) -> Result<[u8; 32]> {
     let bytes = hex::decode(hex_str).context(format!("invalid {field_name} hex"))?;
-    if bytes.len() != zkvote_proof::FIELD_ELEMENT_SIZE {
-        anyhow::bail!(
-            "{field_name} must be {} bytes",
-            zkvote_proof::FIELD_ELEMENT_SIZE
-        );
+    if bytes.len() != FIELD_ELEMENT_SIZE {
+        anyhow::bail!("{field_name} must be {} bytes", FIELD_ELEMENT_SIZE);
     }
     bytes
         .as_slice()
