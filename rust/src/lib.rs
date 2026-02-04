@@ -137,6 +137,15 @@ pub fn fr_from_hex32(h: &str) -> Result<Fr> {
 }
 
 pub fn hash_leaf(address_hex: &str, poseidon: &mut Poseidon<Fr>, zero_leaf: Fr) -> Result<Fr> {
+    let leaf_scalar = address_to_field_element(address_hex)?;
+    if leaf_scalar.is_zero() {
+        Ok(zero_leaf)
+    } else {
+        hash_pair(poseidon, leaf_scalar, Fr::zero())
+    }
+}
+
+fn address_to_field_element(address_hex: &str) -> Result<Fr> {
     let addr = address_hex.trim_start_matches("0x");
     let bytes = hex::decode(addr).with_context(|| format!("invalid hex address: {address_hex}"))?;
     if bytes.len() != ADDRESS_SIZE {
@@ -144,12 +153,7 @@ pub fn hash_leaf(address_hex: &str, poseidon: &mut Poseidon<Fr>, zero_leaf: Fr) 
     }
     let mut padded = [0u8; FIELD_ELEMENT_SIZE];
     padded[FIELD_ELEMENT_SIZE - ADDRESS_SIZE..].copy_from_slice(&bytes);
-    let leaf_scalar = Fr::from_be_bytes_mod_order(&padded);
-    if leaf_scalar.is_zero() {
-        Ok(zero_leaf)
-    } else {
-        hash_pair(poseidon, leaf_scalar, Fr::zero())
-    }
+    Ok(Fr::from_be_bytes_mod_order(&padded))
 }
 
 pub fn hash_pair(poseidon: &mut Poseidon<Fr>, left: Fr, right: Fr) -> Result<Fr> {
@@ -192,19 +196,10 @@ pub fn pubkey_hex(vk: &VerifyingKey) -> Result<(String, String)> {
 }
 
 pub fn hash_address(address_hex: &str, poseidon: &mut Poseidon<Fr>, zero_leaf: Fr) -> Result<Fr> {
-    let addr = address_hex.trim_start_matches("0x");
-    let bytes = hex::decode(addr).with_context(|| format!("invalid hex address: {address_hex}"))?;
-    if bytes.len() != ADDRESS_SIZE {
-        bail!("address {} must be {} bytes", address_hex, ADDRESS_SIZE);
-    }
-    let mut padded = [0u8; FIELD_ELEMENT_SIZE];
-    padded[FIELD_ELEMENT_SIZE - ADDRESS_SIZE..].copy_from_slice(&bytes);
-    let leaf_scalar = Fr::from_be_bytes_mod_order(&padded);
+    let leaf_scalar = address_to_field_element(address_hex)?;
     if leaf_scalar.is_zero() {
         Ok(zero_leaf)
     } else {
-        poseidon
-            .hash(&[leaf_scalar, Fr::zero()])
-            .map_err(|e| anyhow!(e.to_string()))
+        hash_pair(poseidon, leaf_scalar, Fr::zero())
     }
 }

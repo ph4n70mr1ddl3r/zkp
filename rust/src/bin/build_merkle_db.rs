@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use ark_bn254::Fr;
-use ark_ff::{PrimeField, Zero};
+use ark_ff::Zero;
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use light_poseidon::{Poseidon, PoseidonHasher};
@@ -14,26 +14,11 @@ use std::sync::mpsc;
 use std::thread;
 
 use zkvote_proof::{
-    compute_tree_depth, fr_to_bytes, hash_leaf, hash_pair, project_root, read_manifest,
-    store_metadata_helper, FIELD_ELEMENT_SIZE,
+    compute_tree_depth, fr_to_bytes, get_node, hash_leaf, hash_pair, pack_key, project_root,
+    read_manifest, store_metadata_helper,
 };
 
 use zkvote_proof::MAX_DBS;
-
-fn pack_key(level: u32, idx: u64) -> [u8; 12] {
-    let mut buf = [0u8; 12];
-    buf[..4].copy_from_slice(&level.to_be_bytes());
-    buf[4..].copy_from_slice(&idx.to_be_bytes());
-    buf
-}
-
-fn get_node<T: lmdb::Transaction>(tx: &T, db: Database, level: u32, idx: u64) -> Result<Fr> {
-    let key = pack_key(level, idx);
-    let bytes = tx.get(db, &key)?;
-    let mut buf = [0u8; FIELD_ELEMENT_SIZE];
-    buf.copy_from_slice(bytes);
-    Ok(Fr::from_be_bytes_mod_order(&buf))
-}
 
 /// Build a Poseidon Merkle tree from the shard list into LMDB and write the root to disk.
 #[derive(Debug, Parser)]

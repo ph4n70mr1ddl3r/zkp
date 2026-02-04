@@ -6,7 +6,9 @@ use light_poseidon::Poseidon;
 use lmdb::Environment;
 use std::path::PathBuf;
 
-use zkvote_proof::{find_address_index, get_node, hash_pair, project_root, read_manifest, MAX_DBS};
+use zkvote_proof::{
+    find_address_index, get_node, hash_address, project_root, read_manifest, MAX_DBS,
+};
 
 /// Look up a specific address in merkle.db and verify its leaf hash.
 #[derive(Debug, Parser)]
@@ -38,17 +40,7 @@ fn main() -> Result<()> {
     let mut poseidon =
         Poseidon::<Fr>::new_circom(2).context("failed to init Poseidon (circom-compatible)")?;
     let zero_leaf = Fr::zero();
-    let addr_hex = target_addr.trim_start_matches("0x");
-    let bytes =
-        hex::decode(addr_hex).with_context(|| format!("invalid hex address: {target_addr}"))?;
-    let mut padded = [0u8; 32];
-    padded[12..].copy_from_slice(&bytes);
-    let leaf_scalar = Fr::from_be_bytes_mod_order(&padded);
-    let expected = if leaf_scalar.is_zero() {
-        zero_leaf
-    } else {
-        hash_pair(&mut poseidon, leaf_scalar, Fr::zero())?
-    };
+    let expected = hash_address(target_addr, &mut poseidon, zero_leaf)?;
 
     let env = Environment::new()
         .set_max_dbs(MAX_DBS)

@@ -118,7 +118,13 @@ fn main() -> Result<()> {
         .collect::<Result<_>>()?;
     ensure!(path.len() == proof.merkle_pos.len(), "path length mismatch");
     let computed_root = recompute_root(&leaf, &path, &proof.merkle_pos)?;
-    let db_root = recompute_from_db(proof.leaf_index as u64).ok();
+    let db_root = match recompute_from_db(proof.leaf_index as u64) {
+        Ok(root) => Some(root),
+        Err(e) => {
+            eprintln!("Warning: failed to recompute root from merkle.db: {}", e);
+            None
+        }
+    };
     println!("computed root: {}", computed_root.into_bigint());
     if let Some(db) = &db_root {
         println!(
