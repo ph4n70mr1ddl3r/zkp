@@ -153,14 +153,8 @@ pub fn fr_to_bytes(value: &Fr) -> Vec<u8> {
 
 /// Parses a hex string into a field element (Fr).
 pub fn fr_from_hex32(h: &str) -> Result<Fr> {
-    let bytes = hex::decode(h).context("invalid hex")?;
-    ensure!(
-        bytes.len() == FIELD_ELEMENT_SIZE,
-        "expected {}-byte hex",
-        FIELD_ELEMENT_SIZE
-    );
     let mut buf = [0u8; FIELD_ELEMENT_SIZE];
-    buf.copy_from_slice(&bytes);
+    hex::decode_to_slice(h, &mut buf).context("invalid hex")?;
     Ok(Fr::from_be_bytes_mod_order(&buf))
 }
 

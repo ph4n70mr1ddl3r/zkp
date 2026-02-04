@@ -127,7 +127,11 @@ fn main() -> Result<()> {
     let db_root = match recompute_from_db(proof.leaf_index as u64) {
         Ok(root) => Some(root),
         Err(e) => {
-            eprintln!("Warning: failed to recompute root from merkle.db: {}", e);
+            eprintln!(
+                "Warning: failed to recompute root from merkle.db (non-critical): {}",
+                e
+            );
+            eprintln!("Note: Verification can proceed using the root in the proof");
             None
         }
     };
