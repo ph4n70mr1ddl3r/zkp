@@ -15,12 +15,8 @@ use std::thread;
 
 use zkvote_proof::{
     compute_tree_depth, fr_to_bytes, get_node, hash_address, hash_pair, pack_key, project_root,
-    read_manifest, store_metadata_helper,
+    read_manifest, store_metadata_helper, CHUNK_PAIRS, DEFAULT_WORKER_COUNT, MAX_DBS,
 };
-
-use zkvote_proof::MAX_DBS;
-
-const DEFAULT_WORKER_COUNT: usize = 4;
 
 /// Build a Poseidon Merkle tree from the shard list into LMDB and write the root to disk.
 #[derive(Debug, Parser)]
@@ -271,10 +267,9 @@ fn build_tree(
         let read_tx = env.begin_ro_txn()?;
         let mut write_tx = env.begin_rw_txn()?;
 
-        let chunk_pairs = 200_000u64;
         let mut start: u64 = 0;
         while start < parent_level_count {
-            let end = (start + chunk_pairs).min(parent_level_count);
+            let end = (start + CHUNK_PAIRS).min(parent_level_count);
             let mut pairs = Vec::with_capacity((end - start) as usize);
             for parent_idx in start..end {
                 let left =

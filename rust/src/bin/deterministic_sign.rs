@@ -1,12 +1,10 @@
-use anyhow::{bail, Context, Result};
+use anyhow::Result;
 use clap::Parser;
 use k256::ecdsa::signature::hazmat::PrehashSigner;
 use k256::ecdsa::Signature;
-use k256::ecdsa::SigningKey;
-use k256::FieldBytes;
 use sha2::{Digest, Sha256};
 
-use zkvote_proof::PRIVATE_KEY_HEX_SIZE;
+use zkvote_proof::parse_privkey;
 
 /// Deterministic (RFC6979) ECDSA signature over SHA-256(message).
 #[derive(Debug, Parser)]
@@ -41,22 +39,4 @@ fn main() -> Result<()> {
     println!("s: {}", hex::encode(s_bytes));
     println!("signature_hex: {}", rs_hex);
     Ok(())
-}
-
-fn parse_privkey(hex_key: &str) -> Result<SigningKey> {
-    let trimmed = hex_key.strip_prefix("0x").unwrap_or(hex_key);
-    if trimmed.len() != PRIVATE_KEY_HEX_SIZE {
-        bail!(
-            "private key must be 32-byte hex ({} hex chars), got {}",
-            PRIVATE_KEY_HEX_SIZE,
-            trimmed.len()
-        );
-    }
-    let bytes = hex::decode(trimmed).context("invalid hex private key")?;
-    let raw: [u8; 32] = bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("private key must be exactly 32 bytes"))?;
-    let field_bytes: FieldBytes = raw.into();
-    SigningKey::from_bytes(&field_bytes).map_err(|e| anyhow::anyhow!("invalid secret key: {e}"))
 }

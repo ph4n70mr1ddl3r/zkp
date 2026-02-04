@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 
 use zkvote_proof::{
     compute_tree_depth, eth_address, fr_from_hex32, get_node, hash_address, hash_pair,
-    poseidon_hash2, project_root, MAX_DBS,
+    poseidon_hash2, project_root, DROP_DOMAIN, MAX_DBS,
 };
 
 /// Simulated verifier for the private airdrop: checks signature, address binding, Merkle path, and nullifier.
@@ -108,7 +108,7 @@ fn main() -> Result<()> {
     let sig_r_fr = fr_from_hex32(&proof.signature.r)?;
     let sig_s_fr = fr_from_hex32(&proof.signature.s)?;
     let identity = poseidon_hash2(sig_r_fr, sig_s_fr)?;
-    let drop_domain = Fr::from(1u64);
+    let drop_domain = Fr::from(DROP_DOMAIN);
     let nullifier = poseidon_hash2(identity, drop_domain)?;
     ensure!(
         nullifier.into_bigint().to_string() == proof.nullifier,

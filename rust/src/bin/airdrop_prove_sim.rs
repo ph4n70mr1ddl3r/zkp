@@ -6,7 +6,7 @@ use ark_bn254::Fr;
 use ark_ff::{PrimeField, Zero};
 use clap::Parser;
 use k256::ecdsa::signature::hazmat::PrehashSigner;
-use k256::ecdsa::{Signature, SigningKey, VerifyingKey};
+use k256::ecdsa::{Signature, VerifyingKey};
 use light_poseidon::Poseidon;
 use lmdb::{Database, Environment, Transaction};
 use serde::Serialize;
@@ -14,8 +14,8 @@ use sha2::{Digest, Sha256};
 
 use zkvote_proof::{
     bytes_to_fr, compute_tree_depth, eth_address, find_address_index, fr_from_hex32, get_node,
-    hash_address, poseidon_hash2, project_root, pubkey_hex, read_manifest, MAX_DBS,
-    PRIVATE_KEY_HEX_SIZE,
+    hash_address, parse_privkey, poseidon_hash2, project_root, pubkey_hex, read_manifest,
+    DROP_DOMAIN, MAX_DBS,
 };
 
 /// Simulated prover for the private airdrop: derives address, leaf, nullifier and Merkle path.
@@ -119,7 +119,7 @@ fn main() -> Result<()> {
     let sig_r_fr = fr_from_hex32(&sig_r_hex)?;
     let sig_s_fr = fr_from_hex32(&sig_s_hex)?;
     let identity = poseidon_hash2(sig_r_fr, sig_s_fr)?;
-    let drop_domain = Fr::from(1u64);
+    let drop_domain = Fr::from(DROP_DOMAIN);
     let nullifier = poseidon_hash2(identity, drop_domain)?;
 
     let proof = ProofSim {
@@ -155,23 +155,6 @@ fn main() -> Result<()> {
         .with_context(|| format!("failed to write {}", output_path.display()))?;
     println!("Wrote {}", output_path.display());
     Ok(())
-}
-
-fn parse_privkey(hex_key: &str) -> Result<SigningKey> {
-    let trimmed = hex_key.strip_prefix("0x").unwrap_or(hex_key);
-    if trimmed.len() != PRIVATE_KEY_HEX_SIZE {
-        bail!(
-            "private key must be 32-byte hex ({} hex chars), got {}",
-            PRIVATE_KEY_HEX_SIZE,
-            trimmed.len()
-        );
-    }
-    let bytes = hex::decode(trimmed).context("invalid hex private key")?;
-    let raw: [u8; 32] = bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| anyhow!("private key must be exactly 32 bytes"))?;
-    SigningKey::from_bytes(&raw.into()).map_err(|e| anyhow!("invalid secret key: {e}"))
 }
 
 fn build_membership(
