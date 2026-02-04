@@ -23,6 +23,11 @@ npm run setup:groth16   # produces circuits/airdrop_final.zkey + verification_ke
 
 ## Rust utilities
 ```bash
+# Build and check code
+cargo check
+cargo clippy
+cargo test
+
 # Build Merkle DB + root from shards/manifest.txt (writes merkle.db + merkleroot.txt)
 cargo run --release --bin build_merkle_db
 

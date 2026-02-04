@@ -84,11 +84,17 @@ fn main() -> Result<()> {
     let msg_digest = sha.finalize();
     ensure!(
         hex::encode(msg_digest) == proof.message_sha256,
-        "message digest mismatch"
+        "message digest mismatch: computed={}, expected={}",
+        hex::encode(msg_digest),
+        proof.message_sha256
     );
     let sig = signature_from_hex(&proof.signature.r, &proof.signature.s)?;
-    vk.verify_prehash(&msg_digest, &sig)
-        .map_err(|e| anyhow!("signature verification failed: {e}"))?;
+    vk.verify_prehash(&msg_digest, &sig).map_err(|e| {
+        anyhow!(
+            "signature verification failed for address {}: {e}",
+            proof.address
+        )
+    })?;
 
     // Recompute leaf/hash/nullifier.
     let mut poseidon =

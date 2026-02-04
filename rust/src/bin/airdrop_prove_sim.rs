@@ -82,7 +82,7 @@ fn main() -> Result<()> {
     let vk = VerifyingKey::from(&sk);
     let (pk_x_hex, pk_y_hex) = pubkey_hex(&vk)?;
     let address = eth_address(&vk)?;
-    let recipient = args.recipient.clone().unwrap_or_else(|| address.clone());
+    let recipient = args.recipient.unwrap_or_else(|| address.clone());
 
     let mut sha = Sha256::new();
     sha.update(args.message.as_bytes());
