@@ -6,6 +6,8 @@ use k256::ecdsa::SigningKey;
 use k256::FieldBytes;
 use sha2::{Digest, Sha256};
 
+use zkvote_proof::PRIVATE_KEY_HEX_SIZE;
+
 /// Deterministic (RFC6979) ECDSA signature over SHA-256(message).
 #[derive(Debug, Parser)]
 #[command(name = "deterministic-sign")]
@@ -43,9 +45,10 @@ fn main() -> Result<()> {
 
 fn parse_privkey(hex_key: &str) -> Result<SigningKey> {
     let trimmed = hex_key.strip_prefix("0x").unwrap_or(hex_key);
-    if trimmed.len() != 64 {
+    if trimmed.len() != PRIVATE_KEY_HEX_SIZE {
         bail!(
-            "private key must be 32-byte hex (64 chars), got {}",
+            "private key must be 32-byte hex ({} chars), got {}",
+            PRIVATE_KEY_HEX_SIZE,
             trimmed.len()
         );
     }

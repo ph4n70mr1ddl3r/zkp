@@ -1,21 +1,23 @@
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
 use std::str::FromStr;
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use ark_bn254::Fr;
 use ark_ff::{PrimeField, Zero};
 use clap::Parser;
 use k256::ecdsa::signature::hazmat::PrehashVerifier;
 use k256::ecdsa::{Signature, VerifyingKey};
-use k256::elliptic_curve::sec1::Coordinates;
 use k256::EncodedPoint;
 use light_poseidon::{Poseidon, PoseidonHasher};
-use lmdb::{Database, Environment, Transaction};
+use lmdb::{Environment, Transaction};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use sha3::Keccak256;
+
+use zkvote_proof::{
+    compute_tree_depth, eth_address, fr_from_hex32, get_node, hash_address, hash_pair,
+    poseidon_hash2, project_root, MAX_DBS,
+};
 
 /// Simulated verifier for the private airdrop: checks signature, address binding, Merkle path, and nullifier.
 #[derive(Debug, Parser)]
@@ -126,7 +128,7 @@ fn main() -> Result<()> {
         );
     }
     if computed_root != root {
-        bail!(
+        anyhow::bail!(
             "computed root does not match provided root (computed={}, provided={}, db={})",
             computed_root.into_bigint(),
             root.into_bigint(),
@@ -144,8 +146,13 @@ fn main() -> Result<()> {
 fn pubkey_from_hex(x_hex: &str, y_hex: &str) -> Result<VerifyingKey> {
     let x_bytes = hex::decode(x_hex).context("invalid pubkey x hex")?;
     let y_bytes = hex::decode(y_hex).context("invalid pubkey y hex")?;
-    if x_bytes.len() != 32 || y_bytes.len() != 32 {
-        bail!("pubkey limbs must be 32 bytes each");
+    if x_bytes.len() != zkvote_proof::FIELD_ELEMENT_SIZE
+        || y_bytes.len() != zkvote_proof::FIELD_ELEMENT_SIZE
+    {
+        anyhow::bail!(
+            "pubkey limbs must be {} bytes each",
+            zkvote_proof::FIELD_ELEMENT_SIZE
+        );
     }
     let x_arr: [u8; 32] = x_bytes
         .as_slice()
@@ -162,84 +169,16 @@ fn pubkey_from_hex(x_hex: &str, y_hex: &str) -> Result<VerifyingKey> {
 fn signature_from_hex(r_hex: &str, s_hex: &str) -> Result<Signature> {
     let r = hex::decode(r_hex).context("invalid r hex")?;
     let s = hex::decode(s_hex).context("invalid s hex")?;
-    if r.len() != 32 || s.len() != 32 {
-        bail!("signature limbs must be 32 bytes each");
+    if r.len() != zkvote_proof::FIELD_ELEMENT_SIZE || s.len() != zkvote_proof::FIELD_ELEMENT_SIZE {
+        anyhow::bail!(
+            "signature limbs must be {} bytes each",
+            zkvote_proof::FIELD_ELEMENT_SIZE
+        );
     }
     let mut bytes = [0u8; 64];
     bytes[..32].copy_from_slice(&r);
     bytes[32..].copy_from_slice(&s);
     Signature::from_slice(&bytes).map_err(|e| anyhow!("invalid signature: {e}"))
-}
-
-fn eth_address(vk: &VerifyingKey) -> Result<String> {
-    let point = vk.to_encoded_point(false);
-    let coords = point.coordinates();
-    let (x, y) = match coords {
-        Coordinates::Uncompressed { x, y } => (x, y),
-        _ => bail!("unexpected point encoding"),
-    };
-    let mut encoded = Vec::with_capacity(64);
-    encoded.extend_from_slice(x);
-    encoded.extend_from_slice(y);
-    let mut hasher = Keccak256::new();
-    hasher.update(&encoded);
-    let out = hasher.finalize();
-    let addr = &out[12..];
-    Ok(format!("0x{}", hex::encode(addr)))
-}
-
-fn hash_address(address_hex: &str, poseidon: &mut Poseidon<Fr>, zero_leaf: Fr) -> Result<Fr> {
-    let addr = address_hex.trim_start_matches("0x");
-    let bytes = hex::decode(addr).with_context(|| format!("invalid hex address: {address_hex}"))?;
-    if bytes.len() != 20 {
-        bail!("address {} must be 20 bytes", address_hex);
-    }
-    let mut padded = [0u8; 32];
-    padded[12..].copy_from_slice(&bytes);
-    let leaf_scalar = Fr::from_be_bytes_mod_order(&padded);
-    if leaf_scalar.is_zero() {
-        Ok(zero_leaf)
-    } else {
-        poseidon
-            .hash(&[leaf_scalar, Fr::zero()])
-            .map_err(|e| anyhow!(e.to_string()))
-    }
-}
-
-fn fr_from_hex32(h: &str) -> Result<Fr> {
-    let bytes = hex::decode(h).context("invalid hex32")?;
-    ensure!(bytes.len() == 32, "expected 32-byte hex");
-    let mut buf = [0u8; 32];
-    buf.copy_from_slice(&bytes);
-    Ok(Fr::from_be_bytes_mod_order(&buf))
-}
-
-fn poseidon_hash2(a: Fr, b: Fr) -> Result<Fr> {
-    let mut poseidon =
-        Poseidon::<Fr>::new_circom(2).context("failed to init Poseidon (circom-compatible)")?;
-    poseidon.hash(&[a, b]).map_err(|e| anyhow!(e.to_string()))
-}
-
-fn get_node<T: Transaction>(tx: &T, db: Database, level: u32, idx: u64) -> Result<Fr> {
-    let key = pack_key(level, idx);
-    let bytes = tx.get(db, &key)?;
-    bytes_to_fr(bytes)
-}
-
-fn pack_key(level: u32, idx: u64) -> [u8; 12] {
-    let mut buf = [0u8; 12];
-    buf[..4].copy_from_slice(&level.to_be_bytes());
-    buf[4..].copy_from_slice(&idx.to_be_bytes());
-    buf
-}
-
-fn bytes_to_fr(bytes: &[u8]) -> Result<Fr> {
-    if bytes.len() != 32 {
-        bail!("expected 32-byte field element, got {}", bytes.len());
-    }
-    let mut buf = [0u8; 32];
-    buf.copy_from_slice(bytes);
-    Ok(Fr::from_be_bytes_mod_order(&buf))
 }
 
 fn fr_from_dec(s: &str) -> Result<Fr> {
@@ -254,23 +193,20 @@ fn recompute_root(leaf: &Fr, path: &[Fr], pos: &[u8]) -> Result<Fr> {
         current = if *dir == 0 {
             poseidon
                 .hash(&[current, *sib])
-                .map_err(|e| anyhow!(e.to_string()))?
+                .map_err(|e: light_poseidon::PoseidonError| anyhow!(e.to_string()))?
         } else {
             poseidon
                 .hash(&[*sib, current])
-                .map_err(|e| anyhow!(e.to_string()))?
+                .map_err(|e: light_poseidon::PoseidonError| anyhow!(e.to_string()))?
         };
     }
     Ok(current)
 }
 
 fn recompute_from_db(idx: u64) -> Result<Fr> {
-    let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .context("failed to locate project root")?
-        .to_path_buf();
-    let db_path = project_root.join("merkle.db");
-    let env = Environment::new().set_max_dbs(4).open(&db_path)?;
+    let root = project_root()?;
+    let db_path = root.join("merkle.db");
+    let env = Environment::new().set_max_dbs(MAX_DBS).open(&db_path)?;
     let nodes_db = env.open_db(Some("nodes"))?;
     let meta_db = env.open_db(Some("meta"))?;
     let tx = env.begin_ro_txn()?;
@@ -285,12 +221,8 @@ fn recompute_from_db(idx: u64) -> Result<Fr> {
     let leaf_count_bytes = tx.get(meta_db, b"leaf_count")?;
     let mut lc_arr = [0u8; 8];
     lc_arr.copy_from_slice(leaf_count_bytes);
-    let leaf_count = u64::from_be_bytes(lc_arr);
-    let depth_actual = if leaf_count > 1 {
-        (leaf_count - 1).ilog2() as usize + 1
-    } else {
-        depth
-    };
+    let leaf_count = u64::from_be_bytes(lc_arr) as usize;
+    let depth_actual = compute_tree_depth(leaf_count, depth);
 
     let mut poseidon =
         Poseidon::<Fr>::new_circom(2).context("failed to init Poseidon (circom-compatible)")?;
@@ -313,9 +245,7 @@ fn recompute_from_db(idx: u64) -> Result<Fr> {
                 current,
             )
         };
-        current = poseidon
-            .hash(&[left, right])
-            .map_err(|e| anyhow!(e.to_string()))?;
+        current = hash_pair(&mut poseidon, left, right)?;
         cur_idx /= 2;
     }
     Ok(current)

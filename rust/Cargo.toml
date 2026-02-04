@@ -3,6 +3,34 @@ name = "zkvote-proof"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "zkvote_proof"
+path = "src/lib.rs"
+
+[[bin]]
+name = "build-merkle-db"
+path = "src/bin/build_merkle_db.rs"
+
+[[bin]]
+name = "check-merkle-leaf"
+path = "src/bin/check_merkle_leaf.rs"
+
+[[bin]]
+name = "airdrop-prove-sim"
+path = "src/bin/airdrop_prove_sim.rs"
+
+[[bin]]
+name = "airdrop-verify-sim"
+path = "src/bin/airdrop_verify_sim.rs"
+
+[[bin]]
+name = "print-meta"
+path = "src/bin/print_meta.rs"
+
+[[bin]]
+name = "deterministic-sign"
+path = "src/bin/deterministic_sign.rs"
+
 [dependencies]
 anyhow = "1"
 hex = "0.4"

@@ -1,17 +1,39 @@
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{Context, Result};
 use ark_bn254::Fr;
-use ark_ff::{BigInteger, PrimeField, Zero};
+use ark_ff::{PrimeField, Zero};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use light_poseidon::{Poseidon, PoseidonHasher};
 use lmdb::{Database, DatabaseFlags, Environment, Transaction, WriteFlags};
 use std::sync::mpsc;
 use std::thread;
+
+use zkvote_proof::{
+    compute_tree_depth, fr_to_bytes, hash_leaf, hash_pair, project_root, read_manifest,
+    store_metadata_helper, FIELD_ELEMENT_SIZE,
+};
+
+use zkvote_proof::MAX_DBS;
+
+fn pack_key(level: u32, idx: u64) -> [u8; 12] {
+    let mut buf = [0u8; 12];
+    buf[..4].copy_from_slice(&level.to_be_bytes());
+    buf[4..].copy_from_slice(&idx.to_be_bytes());
+    buf
+}
+
+fn get_node<T: lmdb::Transaction>(tx: &T, db: Database, level: u32, idx: u64) -> Result<Fr> {
+    let key = pack_key(level, idx);
+    let bytes = tx.get(db, &key)?;
+    let mut buf = [0u8; FIELD_ELEMENT_SIZE];
+    buf.copy_from_slice(bytes);
+    Ok(Fr::from_be_bytes_mod_order(&buf))
+}
 
 /// Build a Poseidon Merkle tree from the shard list into LMDB and write the root to disk.
 #[derive(Debug, Parser)]
@@ -40,13 +62,13 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let project_root = project_root()?;
+    let root = project_root()?;
 
-    let manifest_path = project_root.join(&args.manifest);
-    let db_path = project_root.join(&args.db);
-    let root_out_path = project_root.join(&args.root_out);
+    let manifest_path = root.join(&args.manifest);
+    let db_path = root.join(&args.db);
+    let root_out_path = root.join(&args.root_out);
 
-    println!("Project root: {}", project_root.display());
+    println!("Project root: {}", root.display());
     println!("Manifest: {}", manifest_path.display());
     println!("DB dir: {}", db_path.display());
     println!("Root file: {}", root_out_path.display());
@@ -58,7 +80,7 @@ fn main() -> Result<()> {
 
     let map_size = args.map_size_gb * (1 << 30);
     let env = Environment::new()
-        .set_max_dbs(4)
+        .set_max_dbs(MAX_DBS)
         .set_map_size(map_size)
         .open(&db_path)
         .with_context(|| format!("failed to open lmdb env at {}", db_path.display()))?;
@@ -84,7 +106,7 @@ fn main() -> Result<()> {
         ingest_leaves(&env, nodes_db, &shard_files, zero_leaf, args.batch, workers)
             .context("ingesting leaves")?;
     if leaf_count == 0 {
-        bail!("no addresses found in manifest {}", manifest_path.display());
+        anyhow::bail!("no addresses found in manifest {}", manifest_path.display());
     }
 
     let padded_leaves = leaf_count.next_power_of_two();
@@ -104,34 +126,23 @@ fn main() -> Result<()> {
         leaf_count = padded_leaves;
     }
 
-    let depth = if leaf_count > 1 {
-        (leaf_count - 1).ilog2() as usize
-    } else {
-        0
-    };
+    let depth = compute_tree_depth(leaf_count, 0);
     let zero_hashes = compute_zero_hashes(&mut poseidon, zero_leaf, depth + 1)?;
 
     store_metadata(&env, meta_db, leaf_count as u64, depth as u32)?;
 
-    let root = build_tree(&env, nodes_db, leaf_count as u64, &zero_hashes, workers)
+    let root_val = build_tree(&env, nodes_db, leaf_count as u64, &zero_hashes, workers)
         .context("building merkle tree")?;
-    store_root(&env, meta_db, &root)?;
-    fs::write(&root_out_path, root.to_string())
+    store_root(&env, meta_db, &root_val)?;
+    fs::write(&root_out_path, root_val.to_string())
         .with_context(|| format!("failed to write {}", root_out_path.display()))?;
 
-    println!("Merkle root: {}", root);
+    println!("Merkle root: {}", root_val);
     println!("Stored in {}", root_out_path.display());
     Ok(())
 }
 
-fn project_root() -> Result<PathBuf> {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(Path::to_path_buf)
-        .context("failed to locate project root")
-}
-
-fn remove_path(path: &Path) -> Result<()> {
+fn remove_path(path: &PathBuf) -> Result<()> {
     if path.exists() {
         if path.is_dir() {
             fs::remove_dir_all(path)
@@ -144,36 +155,8 @@ fn remove_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn read_manifest(path: &Path) -> Result<Vec<PathBuf>> {
-    let file =
-        File::open(path).with_context(|| format!("failed to open manifest {}", path.display()))?;
-    let reader = BufReader::new(file);
-    let mut entries = Vec::new();
-    for line in reader.lines() {
-        let line = line?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        entries.push(path.parent().unwrap_or_else(|| Path::new("")).join(trimmed));
-    }
-    if entries.is_empty() {
-        bail!("manifest {} is empty", path.display());
-    }
-    Ok(entries)
-}
-
 fn store_metadata(env: &Environment, meta_db: Database, leaf_count: u64, depth: u32) -> Result<()> {
-    let mut tx = env.begin_rw_txn()?;
-    tx.put(
-        meta_db,
-        b"leaf_count",
-        &leaf_count.to_be_bytes(),
-        WriteFlags::empty(),
-    )?;
-    tx.put(meta_db, b"depth", &depth.to_be_bytes(), WriteFlags::empty())?;
-    tx.commit()?;
-    Ok(())
+    store_metadata_helper(env, meta_db, leaf_count, depth)
 }
 
 fn store_root(env: &Environment, meta_db: Database, root: &Fr) -> Result<()> {
@@ -345,56 +328,6 @@ fn build_tree(
     let read_tx = env.begin_ro_txn()?;
     let root = get_node(&read_tx, nodes_db, level, 0).context("missing root after build")?;
     Ok(root)
-}
-
-fn get_node<T: Transaction>(tx: &T, db: Database, level: u32, idx: u64) -> Result<Fr> {
-    let key = pack_key(level, idx);
-    let bytes = tx.get(db, &key)?;
-    bytes_to_fr(bytes)
-}
-
-fn pack_key(level: u32, idx: u64) -> [u8; 12] {
-    let mut buf = [0u8; 12];
-    buf[..4].copy_from_slice(&level.to_be_bytes());
-    buf[4..].copy_from_slice(&idx.to_be_bytes());
-    buf
-}
-
-fn hash_leaf(address_hex: &str, poseidon: &mut Poseidon<Fr>, zero_leaf: Fr) -> Result<Fr> {
-    let addr = address_hex.trim_start_matches("0x");
-    let bytes = hex::decode(addr).with_context(|| format!("invalid hex address: {address_hex}"))?;
-    if bytes.len() != 20 {
-        bail!("address {} must be 20 bytes", address_hex);
-    }
-    let mut padded = [0u8; 32];
-    padded[12..].copy_from_slice(&bytes);
-    let leaf_scalar = Fr::from_be_bytes_mod_order(&padded);
-    if leaf_scalar.is_zero() {
-        Ok(zero_leaf)
-    } else {
-        hash_pair(poseidon, leaf_scalar, Fr::zero())
-    }
-}
-
-fn hash_pair(poseidon: &mut Poseidon<Fr>, left: Fr, right: Fr) -> Result<Fr> {
-    poseidon
-        .hash(&[left, right])
-        .map_err(|e| anyhow!(e.to_string()))
-}
-
-fn fr_to_bytes(value: &Fr) -> Vec<u8> {
-    value.into_bigint().to_bytes_be()
-}
-
-fn bytes_to_fr(bytes: &[u8]) -> Result<Fr> {
-    ensure!(
-        bytes.len() == 32,
-        "expected 32-byte field element, got {}",
-        bytes.len()
-    );
-    let mut buf = [0u8; 32];
-    buf.copy_from_slice(bytes);
-    Ok(Fr::from_be_bytes_mod_order(&buf))
 }
 
 fn hash_and_flush_leaves(
