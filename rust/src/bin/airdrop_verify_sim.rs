@@ -198,11 +198,11 @@ fn recompute_root(leaf: &Fr, path: &[Fr], pos: &[u8]) -> Result<Fr> {
         current = if *dir == 0 {
             poseidon
                 .hash(&[current, *sib])
-                .map_err(|e: light_poseidon::PoseidonError| anyhow!(e.to_string()))?
+                .with_context(|| "failed to hash Merkle path element")?
         } else {
             poseidon
                 .hash(&[*sib, current])
-                .map_err(|e: light_poseidon::PoseidonError| anyhow!(e.to_string()))?
+                .with_context(|| "failed to hash Merkle path element")?
         };
     }
     Ok(current)

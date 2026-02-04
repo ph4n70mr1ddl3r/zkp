@@ -11,7 +11,7 @@ include "./vendor/circom-ecdsa/ecdsa.circom";
 // Witness: secp256k1 pubkey limbs, ECDSA signature limbs over fixed message, address bytes, merkle path.
 template Airdrop(DEPTH, LIMB_BITS, LIMB_COUNT) {
     // Domain separator for this airdrop (scope nullifiers); replace with chainId/contract-specific value if needed.
-    var DROP_DOMAIN = 1;
+    var DROP_DOMAIN = 1; // TODO: Make configurable for multi-chain deployments
 
     // Public signals
     signal input root;
@@ -31,6 +31,7 @@ template Airdrop(DEPTH, LIMB_BITS, LIMB_COUNT) {
     // Computed via ethers: keccak256(toUtf8Bytes("zk-airdrop-claim")) =
     // 0xb1383abb9dbacc33773143038d1f83cecf54eb16b340ec7025c1fb57d5f32191
     // Limbs (64-bit LE): [0x25c1fb57d5f32191, 0xcf54eb16b340ec70, 0x773143038d1f83ce, 0xb1383abb9dbacc33]
+    // NOTE: To change the message, recompute the hash and update MSG_LIMBS accordingly
     assert(LIMB_COUNT == 4);
     var MSG_LIMBS[LIMB_COUNT];
     MSG_LIMBS[0] = 2720732004578697617;    // 0x25c1fb57d5f32191
@@ -207,4 +208,8 @@ template Airdrop(DEPTH, LIMB_BITS, LIMB_COUNT) {
 }
 
 // Depth 26 (log2(leaf_count) for 2^26 leaves), limb bits 64, limb count 4.
+// NOTE: Adjust DEPTH based on your expected maximum leaf count:
+// - DEPTH=20 supports ~1M leaves
+// - DEPTH=24 supports ~16M leaves
+// - DEPTH=26 supports ~67M leaves (current setting)
 component main = Airdrop(26, 64, 4);

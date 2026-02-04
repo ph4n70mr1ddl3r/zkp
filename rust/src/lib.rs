@@ -96,6 +96,10 @@ pub fn read_manifest(path: &Path) -> Result<Vec<PathBuf>> {
 }
 
 /// Finds the index of a target address across multiple shard files.
+///
+/// # Complexity
+/// O(n) where n is the total number of addresses across all shard files.
+/// For large datasets, consider building an index or using a more efficient lookup structure.
 pub fn find_address_index(shard_files: &[PathBuf], target: &str) -> Result<usize> {
     let target = target.trim();
     let mut total = 0usize;
@@ -185,14 +189,16 @@ fn address_to_field_element(address_hex: &str) -> Result<Fr> {
 pub fn hash_pair(poseidon: &mut Poseidon<Fr>, left: Fr, right: Fr) -> Result<Fr> {
     poseidon
         .hash(&[left, right])
-        .map_err(|e| anyhow!(e.to_string()))
+        .with_context(|| "Poseidon hash failed")
 }
 
 /// Computes the Poseidon hash of two field elements.
 pub fn poseidon_hash2(a: Fr, b: Fr) -> Result<Fr> {
     let mut poseidon =
         Poseidon::<Fr>::new_circom(2).context("failed to init Poseidon (circom-compatible)")?;
-    poseidon.hash(&[a, b]).map_err(|e| anyhow!(e.to_string()))
+    poseidon
+        .hash(&[a, b])
+        .with_context(|| "Poseidon hash failed")
 }
 
 /// Derives the Ethereum address from an ECDSA verifying key.

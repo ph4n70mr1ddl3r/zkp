@@ -361,10 +361,11 @@ fn parallel_hash_leaves(
                 let mut poseidon = Poseidon::<Fr>::new_circom(2).map_err(anyhow::Error::msg)?;
                 let mut local = Vec::with_capacity(slice.len());
                 for (idx, addr) in slice {
-                    let leaf = hash_address(addr, &mut poseidon, zero_leaf).map_err(|e| {
-                        let _ = error_tx.send(e.to_string());
-                        anyhow::anyhow!("hash failed: {}", e)
-                    })?;
+                    let leaf = hash_address(addr, &mut poseidon, zero_leaf)
+                        .with_context(|| format!("failed to hash address at index {}", idx))
+                        .inspect_err(|e| {
+                            let _ = error_tx.send(e.to_string());
+                        })?;
                     local.push((*idx, leaf));
                 }
                 tx.send(local)?;
@@ -403,10 +404,12 @@ fn parallel_hash_pairs(pairs: Vec<(u64, Fr, Fr)>, workers: usize) -> Result<Vec<
                 let mut poseidon = Poseidon::<Fr>::new_circom(2).map_err(anyhow::Error::msg)?;
                 let mut local = Vec::with_capacity(slice.len());
                 for (idx, left, right) in slice {
-                    let parent = poseidon.hash(&[left, right]).map_err(|e| {
-                        let _ = error_tx.send(e.to_string());
-                        anyhow::anyhow!("hash failed: {}", e)
-                    })?;
+                    let parent = poseidon
+                        .hash(&[left, right])
+                        .with_context(|| format!("failed to hash pair at index {}", idx))
+                        .inspect_err(|e| {
+                            let _ = error_tx.send(e.to_string());
+                        })?;
                     local.push((idx, parent));
                 }
                 tx.send(local)?;
