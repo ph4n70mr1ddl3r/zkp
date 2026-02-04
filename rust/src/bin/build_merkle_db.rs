@@ -14,11 +14,13 @@ use std::sync::mpsc;
 use std::thread;
 
 use zkvote_proof::{
-    compute_tree_depth, fr_to_bytes, get_node, hash_leaf, hash_pair, pack_key, project_root,
+    compute_tree_depth, fr_to_bytes, get_node, hash_address, hash_pair, pack_key, project_root,
     read_manifest, store_metadata_helper,
 };
 
 use zkvote_proof::MAX_DBS;
+
+const DEFAULT_WORKER_COUNT: usize = 4;
 
 /// Build a Poseidon Merkle tree from the shard list into LMDB and write the root to disk.
 #[derive(Debug, Parser)]
@@ -86,7 +88,7 @@ fn main() -> Result<()> {
     let workers = args
         .workers
         .or_else(|| thread::available_parallelism().ok().map(|v| v.get()))
-        .unwrap_or(4);
+        .unwrap_or(DEFAULT_WORKER_COUNT);
     let mut leaf_count =
         ingest_leaves(&env, nodes_db, &shard_files, zero_leaf, args.batch, workers)
             .context("ingesting leaves")?;
@@ -352,13 +354,14 @@ fn parallel_hash_leaves(
         for slice in chunk.chunks(chunk_size) {
             let tx = tx.clone();
             scope.spawn(move || {
-                let mut poseidon = Poseidon::<Fr>::new_circom(2).expect("poseidon init in worker");
+                let mut poseidon = Poseidon::<Fr>::new_circom(2).map_err(anyhow::Error::msg)?;
                 let mut local = Vec::with_capacity(slice.len());
                 for (idx, addr) in slice {
-                    let leaf = hash_leaf(addr, &mut poseidon, zero_leaf).expect("hash_leaf");
+                    let leaf = hash_address(addr, &mut poseidon, zero_leaf)?;
                     local.push((*idx, leaf));
                 }
-                tx.send(local).expect("send");
+                tx.send(local)?;
+                Ok::<_, anyhow::Error>(())
             });
         }
     });
@@ -380,15 +383,14 @@ fn parallel_hash_pairs(pairs: Vec<(u64, Fr, Fr)>, workers: usize) -> Result<Vec<
             let tx = tx.clone();
             let slice = slice.to_vec();
             scope.spawn(move || {
-                let mut poseidon = Poseidon::<Fr>::new_circom(2).expect("poseidon init in worker");
+                let mut poseidon = Poseidon::<Fr>::new_circom(2).map_err(anyhow::Error::msg)?;
                 let mut local = Vec::with_capacity(slice.len());
                 for (idx, left, right) in slice {
-                    let parent = poseidon
-                        .hash(&[left, right])
-                        .expect("poseidon hash in worker");
+                    let parent = poseidon.hash(&[left, right])?;
                     local.push((idx, parent));
                 }
-                tx.send(local).expect("send");
+                tx.send(local)?;
+                Ok::<_, anyhow::Error>(())
             });
         }
     });

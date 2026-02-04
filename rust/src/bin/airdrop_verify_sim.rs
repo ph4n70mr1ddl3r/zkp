@@ -149,38 +149,30 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn pubkey_from_hex(x_hex: &str, y_hex: &str) -> Result<VerifyingKey> {
-    let x_bytes = hex::decode(x_hex).context("invalid pubkey x hex")?;
-    let y_bytes = hex::decode(y_hex).context("invalid pubkey y hex")?;
-    if x_bytes.len() != zkvote_proof::FIELD_ELEMENT_SIZE
-        || y_bytes.len() != zkvote_proof::FIELD_ELEMENT_SIZE
-    {
+fn validate_hex_to_bytes32(hex_str: &str, field_name: &str) -> Result<[u8; 32]> {
+    let bytes = hex::decode(hex_str).context(format!("invalid {field_name} hex"))?;
+    if bytes.len() != zkvote_proof::FIELD_ELEMENT_SIZE {
         anyhow::bail!(
-            "pubkey limbs must be {} bytes each",
+            "{field_name} must be {} bytes",
             zkvote_proof::FIELD_ELEMENT_SIZE
         );
     }
-    let x_arr: [u8; 32] = x_bytes
+    bytes
         .as_slice()
         .try_into()
-        .map_err(|_| anyhow!("pubkey x must be 32 bytes"))?;
-    let y_arr: [u8; 32] = y_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| anyhow!("pubkey y must be 32 bytes"))?;
+        .map_err(|_| anyhow!("{field_name} must be exactly 32 bytes"))
+}
+
+fn pubkey_from_hex(x_hex: &str, y_hex: &str) -> Result<VerifyingKey> {
+    let x_arr = validate_hex_to_bytes32(x_hex, "pubkey x")?;
+    let y_arr = validate_hex_to_bytes32(y_hex, "pubkey y")?;
     let point = EncodedPoint::from_affine_coordinates(&x_arr.into(), &y_arr.into(), false);
     VerifyingKey::from_encoded_point(&point).map_err(|e| anyhow!("invalid pubkey: {e}"))
 }
 
 fn signature_from_hex(r_hex: &str, s_hex: &str) -> Result<Signature> {
-    let r = hex::decode(r_hex).context("invalid r hex")?;
-    let s = hex::decode(s_hex).context("invalid s hex")?;
-    if r.len() != zkvote_proof::FIELD_ELEMENT_SIZE || s.len() != zkvote_proof::FIELD_ELEMENT_SIZE {
-        anyhow::bail!(
-            "signature limbs must be {} bytes each",
-            zkvote_proof::FIELD_ELEMENT_SIZE
-        );
-    }
+    let r = validate_hex_to_bytes32(r_hex, "signature r")?;
+    let s = validate_hex_to_bytes32(s_hex, "signature s")?;
     let mut bytes = [0u8; 64];
     bytes[..32].copy_from_slice(&r);
     bytes[32..].copy_from_slice(&s);

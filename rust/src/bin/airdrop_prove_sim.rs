@@ -161,7 +161,7 @@ fn parse_privkey(hex_key: &str) -> Result<SigningKey> {
     let trimmed = hex_key.strip_prefix("0x").unwrap_or(hex_key);
     if trimmed.len() != PRIVATE_KEY_HEX_SIZE {
         bail!(
-            "private key must be 32-byte hex ({} chars), got {}",
+            "private key must be 32-byte hex ({} hex chars), got {}",
             PRIVATE_KEY_HEX_SIZE,
             trimmed.len()
         );

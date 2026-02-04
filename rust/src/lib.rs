@@ -136,7 +136,7 @@ pub fn fr_from_hex32(h: &str) -> Result<Fr> {
     Ok(Fr::from_be_bytes_mod_order(&buf))
 }
 
-pub fn hash_leaf(address_hex: &str, poseidon: &mut Poseidon<Fr>, zero_leaf: Fr) -> Result<Fr> {
+pub fn hash_address(address_hex: &str, poseidon: &mut Poseidon<Fr>, zero_leaf: Fr) -> Result<Fr> {
     let leaf_scalar = address_to_field_element(address_hex)?;
     if leaf_scalar.is_zero() {
         Ok(zero_leaf)
@@ -193,13 +193,4 @@ pub fn pubkey_hex(vk: &VerifyingKey) -> Result<(String, String)> {
         _ => bail!("unexpected point encoding"),
     };
     Ok((hex::encode(x), hex::encode(y)))
-}
-
-pub fn hash_address(address_hex: &str, poseidon: &mut Poseidon<Fr>, zero_leaf: Fr) -> Result<Fr> {
-    let leaf_scalar = address_to_field_element(address_hex)?;
-    if leaf_scalar.is_zero() {
-        Ok(zero_leaf)
-    } else {
-        hash_pair(poseidon, leaf_scalar, Fr::zero())
-    }
 }
